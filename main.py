@@ -2,6 +2,8 @@ import os
 import time
 import cv2
 import argparse
+import httpx
+from dotenv import load_dotenv
 from picamera2 import Picamera2
 from ultralytics import YOLO
 
@@ -11,6 +13,7 @@ CLASS_MAP = {
   0: 1,
   15: 0
 }
+NOTIFICATION_COOLDOWN = 15 * 60
 
 HAS_DISPLAY = os.environ.get('DISPLAY') is not None or os.environ.get('WAYLAND_DISPLAY') is not None
 
@@ -33,6 +36,8 @@ picam2.preview_configuration.main.format = "RGB888"
 picam2.configure("preview")
 picam2.start()
 
+load_dotenv()
+
 print(f"Starting Cat{' and Person' if CAPTURE_PEOPLE else ''} Inference...")
 
 last_save_time = 0
@@ -48,6 +53,7 @@ def saveImage(timestamp, frame, boxes):
             class_id = CLASS_MAP[int(box.cls[0])]
 
             f.write(f"{class_id} {x_c:.5f} {y_c:.5f} {w:.5f} {h:.5f}\n")
+  return img_path
 
 def shouldSave(boxes):
   for box in boxes:
@@ -56,6 +62,39 @@ def shouldSave(boxes):
     elif int(box.cls[0]) == 0 and float(box.conf[0]) > 0.5:
       return True
   return False
+
+def sendNotification(imgPath, timestamp):
+  API_KEY = os.getenv('PUSHBULLET_API_KEY')
+  if API_KEY:
+    headers = {
+        'Access-Token': API_KEY, 
+        'Content-type': 'application/json'
+    }
+    upload_response = httpx.post(
+      'https://api.pushbullet.com/v2/upload-request', 
+      headers=headers,
+      json={
+        'file_name': f'cat_{timestamp}.jpg',
+        'file_type': 'image/jpeg'
+      }
+    ).json()
+
+    with open(imgPath, "rb") as f:
+      httpx.post(upload_response['upload_url'],files={"file": f})
+
+    notification_body = {
+      "type": "file",
+      "title": "Cat Detected!",
+      "file_name": upload_response["file_name"],
+      "file_type": upload_response["file_type"],
+      "file_url": upload_response["file_url"],
+      "body": "We saw a motherflippin cat!"
+    }
+    response = client.post(
+            'https://api.pushbullet.com/v2/pushes',
+            headers=headers,
+            json=notification_body
+    )
 
 try:
   while True:
@@ -82,11 +121,15 @@ try:
 
     
     if len(result.boxes) > 0:
+      catDetected = any(int(box.cls[0]) == 15 for box in result.boxes)
+      imgPath = ""
       if timestamp - last_save_time > COOLDOWN and shouldSave(result.boxes):
-        saveImage(timestamp, frame, result.boxes)
+        imgPath = saveImage(timestamp, frame, result.boxes)
         
         print(f"Target spotted at {timestamp}")
         last_save_time = timestamp
+      if timestamp - last_save_time > NOTIFICATION_COOLDOWN and catDetected:
+        sendNotification(imgPath, timestamp)
 
 except KeyboardInterrupt:
   print("\nCapture Stopped")
