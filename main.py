@@ -42,12 +42,20 @@ def saveImage(timestamp, frame, boxes):
   lbl_path = f"{MAIN_DIR}/labels/frame_{timestamp}.txt"
   cv2.imwrite(img_path, frame)
   with open(lbl_path, "w") as f:
-          for box in result.boxes:
+          for box in boxes:
             x_c, y_c, w, h = box.xywhn[0].tolist()
 
             class_id = CLASS_MAP[int(box.cls[0])]
 
             f.write(f"{class_id} {x_c:.5f} {y_c:.5f} {w:.5f} {h:.5f}\n")
+
+def shouldSave(boxes):
+  for box in boxes:
+    if int(box.cls[0]) == 15:
+      return True
+    elif int(box.cls[0]) == 0 and float(box.conf[0]) > 0.5:
+      return True
+  return False
 
 try:
   while True:
@@ -74,7 +82,7 @@ try:
 
     
     if len(result.boxes) > 0:
-      if timestamp - last_save_time > COOLDOWN:
+      if timestamp - last_save_time > COOLDOWN and shouldSave(result.boxes):
         saveImage(timestamp, frame, result.boxes)
         
         print(f"Target spotted at {timestamp}")
