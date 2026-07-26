@@ -1,6 +1,6 @@
 # Cat Dataset Collector
 
-This repository contains a Python script designed to run on a Raspberry Pi to automatically collect and annotate images of cats (and optionally people). The resulting dataset is formatted for YOLO and will be used to fine-tune an edge computer vision model, ultimately powering a target-tracking water turret to deter cats from using the yard as a litter box.
+This repository contains a Python script designed to run on a Raspberry Pi to automatically collect and annotate images of cats (and optionally people). The resulting dataset is formatted for YOLO and will be used to fine-tune an edge computer vision model, ultimately powering a device to deter cats from using my front yard as a litter box.
 
 ## Features
 
