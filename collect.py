@@ -1,81 +1,71 @@
 import argparse
-import os
 import time
+from pathlib import Path
 
 import cv2
 import httpx
 from dotenv import load_dotenv
 from picamera2 import Picamera2
 from ultralytics import YOLO
+import os
 
-MAIN_DIR = "dataset"
+# --- Constants ---
+MAIN_DIR = Path("dataset")
 COOLDOWN = 3.0
-CLASS_MAP = {0: 1, 15: 0}
 NOTIFICATION_COOLDOWN = 15 * 60
+CLASS_MAP = {0: 1, 15: 0}  # COCO to Custom (Person: 1, Cat: 0)
 
 HAS_DISPLAY = (
     os.environ.get("DISPLAY") is not None
     or os.environ.get("WAYLAND_DISPLAY") is not None
 )
 
-parser = argparse.ArgumentParser(prog="collect_cat_images")
-parser.add_argument("-p", "--person", action="store_true")
-args = parser.parse_args()
-CAPTURE_PEOPLE = args.person
 
-# create the directories
-os.makedirs(f"{MAIN_DIR}/images", exist_ok=True)
-os.makedirs(f"{MAIN_DIR}/labels", exist_ok=True)
-
-# load the model
-model = YOLO("../models/yolo26s_hailo_model")
-
-# setup the camera
-picam2 = Picamera2(camera_num=0)
-picam2.preview_configuration.main.size = (1280, 720)
-picam2.preview_configuration.main.format = "RGB888"
-picam2.configure("preview")
-picam2.start()
-
-load_dotenv()
-
-print(f"Starting Cat{' and Person' if CAPTURE_PEOPLE else ''} Inference...")
-
-last_save_time = 0
+def setup_directories():
+    (MAIN_DIR / "images").mkdir(parents=True, exist_ok=True)
+    (MAIN_DIR / "labels").mkdir(parents=True, exist_ok=True)
 
 
-def saveImage(timestamp, frame, boxes):
-    img_path = f"{MAIN_DIR}/images/frame_{timestamp}.jpg"
-    lbl_path = f"{MAIN_DIR}/labels/frame_{timestamp}.txt"
-    cv2.imwrite(img_path, frame)
+def save_image(timestamp: int, frame, boxes) -> Path:
+    img_path = MAIN_DIR / "images" / f"frame_{timestamp}.jpg"
+    lbl_path = MAIN_DIR / "labels" / f"frame_{timestamp}.txt"
+
+    cv2.imwrite(str(img_path), frame)
+
     with open(lbl_path, "w") as f:
         for box in boxes:
             x_c, y_c, w, h = box.xywhn[0].tolist()
-
             class_id = CLASS_MAP[int(box.cls[0])]
-
             f.write(f"{class_id} {x_c:.5f} {y_c:.5f} {w:.5f} {h:.5f}\n")
+
     return img_path
 
 
-def shouldSave(boxes):
+def should_save(boxes) -> bool:
     for box in boxes:
-        if int(box.cls[0]) == 15 or int(box.cls[0]) == 0 and float(box.conf[0]) > 0.5:
+        cls_id = int(box.cls[0])
+        conf = float(box.conf[0])
+        # Save if it's a cat (15) OR if it's a person (0) with >50% confidence
+        if cls_id == 15 or (cls_id == 0 and conf > 0.5):
             return True
     return False
 
 
-def sendNotification(imgPath, timestamp):
-    API_KEY = os.getenv("PUSHBULLET_API_KEY")
-    if API_KEY:
-        headers = {"Access-Token": API_KEY, "Content-type": "application/json"}
+def send_notification(img_path: Path, timestamp: int):
+    api_key = os.getenv("PUSHBULLET_API_KEY")
+    if not api_key:
+        return
+
+    headers = {"Access-Token": api_key, "Content-type": "application/json"}
+
+    try:
         upload_response = httpx.post(
             "https://api.pushbullet.com/v2/upload-request",
             headers=headers,
             json={"file_name": f"cat_{timestamp}.jpg", "file_type": "image/jpeg"},
         ).json()
 
-        with open(f"./{imgPath}", "rb") as f:
+        with open(img_path, "rb") as f:
             httpx.post(upload_response["upload_url"], files={"file": f})
 
         notification_body = {
@@ -86,51 +76,82 @@ def sendNotification(imgPath, timestamp):
             "file_url": upload_response["file_url"],
             "body": "We saw a motherflippin cat!",
         }
+
         httpx.post(
             "https://api.pushbullet.com/v2/pushes",
             headers=headers,
             json=notification_body,
         )
+    except httpx.RequestError as e:
+        print(f"Failed to send notification due to network error: {e}")
 
 
-try:
-    while True:
-        classes = [0, 15] if CAPTURE_PEOPLE else [15]
-        frame = picam2.capture_array()
-        results = model(frame, conf=0.15, classes=classes, verbose=False)
+def main():
+    parser = argparse.ArgumentParser(prog="collect_cat_images")
+    parser.add_argument(
+        "-p", "--person", action="store_true", help="Include people in captures"
+    )
+    args = parser.parse_args()
+    capture_people = args.person
 
-        result = results[0]
+    load_dotenv()
+    setup_directories()
 
-        timestamp = int(time.time())
+    model = YOLO("../models/yolo26s_hailo_model")
 
+    picam2 = Picamera2(camera_num=0)
+    picam2.preview_configuration.main.size = (1280, 720)
+    picam2.preview_configuration.main.format = "RGB888"
+    picam2.configure("preview")
+    picam2.start()
+
+    print(f"Starting Cat{' and Person' if capture_people else ''} Inference...")
+
+    last_save_time = 0
+
+    try:
+        while True:
+            # 0 is Person, 15 is Cat in standard COCO
+            classes = [0, 15] if capture_people else [15]
+            frame = picam2.capture_array()
+            results = model(frame, conf=0.15, classes=classes, verbose=False)
+
+            result = results[0]
+            timestamp = int(time.time())
+
+            if HAS_DISPLAY:
+                annotated_frame = result.plot()
+                cv2.imshow("Cat Detector", annotated_frame)
+                key = cv2.waitKey(1)
+
+                if key & 0xFF == ord("q"):
+                    break
+                if key & 0xFF == ord("s"):
+                    print("Manually saving image")
+                    save_image(timestamp, frame, result.boxes)
+
+            if len(result.boxes) > 0:
+                cat_detected = any(int(box.cls[0]) == 15 for box in result.boxes)
+
+                if timestamp - last_save_time > COOLDOWN and should_save(result.boxes):
+                    img_path = save_image(timestamp, frame, result.boxes)
+                    print(f"Target spotted at {timestamp}")
+
+                    if (
+                        timestamp - last_save_time > NOTIFICATION_COOLDOWN
+                        and cat_detected
+                    ):
+                        send_notification(img_path, timestamp)
+
+                    last_save_time = timestamp
+
+    except KeyboardInterrupt:
+        print("\nCapture Stopped")
+    finally:
+        picam2.stop()
         if HAS_DISPLAY:
-            anotated_frame = result.plot()
-            cv2.imshow("Cat Detector", anotated_frame)
+            cv2.destroyAllWindows()
 
-            key = cv2.waitKey(1)
 
-            if key & 0xFF == ord("q"):
-                break
-
-            if key & 0xFF == ord("s"):
-                print("Manually saving image")
-                saveImage(timestamp, frame, result.boxes)
-
-        if len(result.boxes) > 0:
-            catDetected = any(int(box.cls[0]) == 15 for box in result.boxes)
-            imgPath = ""
-            if timestamp - last_save_time > COOLDOWN and shouldSave(result.boxes):
-                imgPath = saveImage(timestamp, frame, result.boxes)
-
-                print(f"Target spotted at {timestamp}")
-                if timestamp - last_save_time > NOTIFICATION_COOLDOWN and catDetected:
-                    sendNotification(imgPath, timestamp)
-                last_save_time = timestamp
-
-except KeyboardInterrupt:
-    print("\nCapture Stopped")
-
-finally:
-    picam2.stop()
-    if HAS_DISPLAY:
-        cv2.destroyAllWindows()
+if __name__ == "__main__":
+    main()
