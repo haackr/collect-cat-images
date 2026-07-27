@@ -1,4 +1,5 @@
 import argparse
+import os
 import time
 from pathlib import Path
 
@@ -7,7 +8,6 @@ import httpx
 from dotenv import load_dotenv
 from picamera2 import Picamera2
 from ultralytics import YOLO
-import os
 
 # --- Constants ---
 MAIN_DIR = Path("dataset")
@@ -135,7 +135,9 @@ def main():
 
                 if timestamp - last_save_time > COOLDOWN and should_save(result.boxes):
                     img_path = save_image(timestamp, frame, result.boxes)
-                    print(f"Target spotted at {timestamp}")
+                    print(
+                        f"{'Cat' if cat_detected else 'Person'} spotted at {timestamp}"
+                    )
 
                     if (
                         timestamp - last_save_time > NOTIFICATION_COOLDOWN
