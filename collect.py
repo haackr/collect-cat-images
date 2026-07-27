@@ -43,7 +43,7 @@ def save_image(timestamp: int, frame, boxes) -> Path:
     return img_path
 
 
-def should_save(boxes, saved_centers) -> bool:
+def should_save(boxes, saved_centers) -> tuple[bool, list]:
     current_centers = []
     significant_movement = False
     sufficient_detection = False
@@ -70,9 +70,9 @@ def should_save(boxes, saved_centers) -> bool:
 
         # Only save the image if there is significant movement and it's detected at the confidence thresholds.
         if (significant_movement or len(saved_centers) == 0) and sufficient_detection:
-            return True
+            return (True, current_centers)
 
-    return False
+    return (False, current_centers)
 
 
 def send_notification(img_path: Path, timestamp: int):
@@ -159,22 +159,23 @@ def main():
             if len(result.boxes) > 0:
                 cat_detected = any(int(box.cls[0]) == 15 for box in result.boxes)
 
-                if timestamp - last_save_time > COOLDOWN and should_save(
-                    result.boxes, saved_centers
-                ):
-                    img_path = save_image(timestamp, frame, result.boxes)
-                    print(
-                        f"{'Cat' if cat_detected else 'Person'} spotted at {timestamp}"
-                    )
+                if timestamp - last_save_time > COOLDOWN:
+                    (do_save, new_centers) = should_save(result.boxes, saved_centers)
+                    if do_save:
+                        saved_centers = new_centers
+                        img_path = save_image(timestamp, frame, result.boxes)
+                        print(
+                            f"{'Cat' if cat_detected else 'Person'} spotted at {timestamp}"
+                        )
 
-                    if (
-                        timestamp - last_notification_time > NOTIFICATION_COOLDOWN
-                        and cat_detected
-                    ):
-                        send_notification(img_path, timestamp)
-                        last_notification_time = timestamp
+                        if (
+                            timestamp - last_notification_time > NOTIFICATION_COOLDOWN
+                            and cat_detected
+                        ):
+                            send_notification(img_path, timestamp)
+                            last_notification_time = timestamp
 
-                    last_save_time = timestamp
+                        last_save_time = timestamp
 
     except KeyboardInterrupt:
         print("\nCapture Stopped")
