@@ -22,8 +22,6 @@ HAS_DISPLAY = (
     or os.environ.get("WAYLAND_DISPLAY") is not None
 )
 
-saved_centers = []
-
 
 def setup_directories():
     (MAIN_DIR / "images").mkdir(parents=True, exist_ok=True)
@@ -45,7 +43,7 @@ def save_image(timestamp: int, frame, boxes) -> Path:
     return img_path
 
 
-def should_save(boxes) -> bool:
+def should_save(boxes, saved_centers) -> bool:
     current_centers = []
     significant_movement = False
     sufficient_detection = False
@@ -134,7 +132,8 @@ def main():
     print(f"Starting Cat{' and Person' if capture_people else ''} Inference...")
 
     last_save_time = 0
-    last_nofication_time = 0
+    last_notification_time = 0
+    saved_centers = []
 
     try:
         while True:
@@ -160,17 +159,20 @@ def main():
             if len(result.boxes) > 0:
                 cat_detected = any(int(box.cls[0]) == 15 for box in result.boxes)
 
-                if timestamp - last_save_time > COOLDOWN and should_save(result.boxes):
+                if timestamp - last_save_time > COOLDOWN and should_save(
+                    result.boxes, saved_centers
+                ):
                     img_path = save_image(timestamp, frame, result.boxes)
                     print(
                         f"{'Cat' if cat_detected else 'Person'} spotted at {timestamp}"
                     )
 
                     if (
-                        timestamp - last_nofication_time > NOTIFICATION_COOLDOWN
+                        timestamp - last_notification_time > NOTIFICATION_COOLDOWN
                         and cat_detected
                     ):
                         send_notification(img_path, timestamp)
+                        last_notification_time = timestamp
 
                     last_save_time = timestamp
 
