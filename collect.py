@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import time
 from pathlib import Path
@@ -14,11 +15,14 @@ MAIN_DIR = Path("dataset")
 COOLDOWN = 3.0
 NOTIFICATION_COOLDOWN = 15 * 60
 CLASS_MAP = {0: 1, 15: 0}  # COCO to Custom (Person: 1, Cat: 0)
+STATIC_TOLERANCE = 0.05
 
 HAS_DISPLAY = (
     os.environ.get("DISPLAY") is not None
     or os.environ.get("WAYLAND_DISPLAY") is not None
 )
+
+saved_centers = []
 
 
 def setup_directories():
@@ -42,12 +46,34 @@ def save_image(timestamp: int, frame, boxes) -> Path:
 
 
 def should_save(boxes) -> bool:
+    current_centers = []
+    significant_movement = False
+    sufficient_detection = False
     for box in boxes:
+        is_static = False
+        x_c, y_c, _w, _h = box.xywhn[0].tolist()
+        current_centers.append((x_c, y_c))
+
         cls_id = int(box.cls[0])
         conf = float(box.conf[0])
+
+        # Check to see if there there is any movement from the detected object.
+        for last_x, last_y in saved_centers:
+            distance = math.hypot(x_c - last_x, y_c - last_y)
+            if distance < STATIC_TOLERANCE:
+                is_static = True
+                break
+        if not is_static:
+            significant_movement = True
+
         # Save if it's a cat (15) OR if it's a person (0) with >50% confidence
         if cls_id == 15 or (cls_id == 0 and conf > 0.5):
+            sufficient_detection = True
+
+        # Only save the image if there is significant movement and it's detected at the confidence thresholds.
+        if (significant_movement or len(saved_centers) == 0) and sufficient_detection:
             return True
+
     return False
 
 
