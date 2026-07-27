@@ -134,6 +134,7 @@ def main():
     print(f"Starting Cat{' and Person' if capture_people else ''} Inference...")
 
     last_save_time = 0
+    last_nofication_time = 0
 
     try:
         while True:
@@ -166,7 +167,7 @@ def main():
                     )
 
                     if (
-                        timestamp - last_save_time > NOTIFICATION_COOLDOWN
+                        timestamp - last_nofication_time > NOTIFICATION_COOLDOWN
                         and cat_detected
                     ):
                         send_notification(img_path, timestamp)
