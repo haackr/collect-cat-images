@@ -76,7 +76,7 @@ def should_save(boxes, saved_centers) -> tuple[bool, list]:
     return (False, current_centers)
 
 
-def filter_big_cats(boxes):
+def filter_big_cats(boxes) -> list:
     valid_boxes = []
     for box in boxes:
         w = float(box.xywhn[0][2])
@@ -151,12 +151,13 @@ def main():
     try:
         while True:
             # 0 is Person, 15 is Cat in standard COCO
+            start = time.time()
+            timestamp = int(start)
             classes = [0, 15] if capture_people else [15]
             frame = picam2.capture_array()
             results = model(frame, conf=0.15, classes=classes, verbose=False)
 
             result = results[0]
-            timestamp = int(time.time())
 
             if HAS_DISPLAY:
                 annotated_frame = result.plot()
@@ -190,6 +191,10 @@ def main():
                             last_notification_time = timestamp
 
                         last_save_time = timestamp
+
+            time.sleep(
+                max(0, 0.25 - (time.time() - start))
+            )  # target 4 frames per second
 
     except KeyboardInterrupt:
         print("\nCapture Stopped")
