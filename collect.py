@@ -16,6 +16,7 @@ COOLDOWN = 3.0
 NOTIFICATION_COOLDOWN = 15 * 60
 CLASS_MAP = {0: 1, 15: 0}  # COCO to Custom (Person: 1, Cat: 0)
 STATIC_TOLERANCE = 0.05
+MAX_CAT_SIZE = 0.15
 
 HAS_DISPLAY = (
     os.environ.get("DISPLAY") is not None
@@ -73,6 +74,18 @@ def should_save(boxes, saved_centers) -> tuple[bool, list]:
             return (True, current_centers)
 
     return (False, current_centers)
+
+
+def filter_big_cats(boxes):
+    valid_boxes = []
+    for box in boxes:
+        w = float(box.xywhn[0][2])
+        h = float(box.xywhn[0][3])
+        size = w * h
+        if int(box.cls[0]) == 15 and size > MAX_CAT_SIZE:
+            continue
+        valid_boxes.append(box)
+    return valid_boxes
 
 
 def send_notification(img_path: Path, timestamp: int):
@@ -157,13 +170,14 @@ def main():
                     save_image(timestamp, frame, result.boxes)
 
             if len(result.boxes) > 0:
-                cat_detected = any(int(box.cls[0]) == 15 for box in result.boxes)
+                valid_boxes = filter_big_cats(result.boxes)
+                cat_detected = any(int(box.cls[0]) == 15 for box in valid_boxes)
 
                 if timestamp - last_save_time > COOLDOWN:
-                    (do_save, new_centers) = should_save(result.boxes, saved_centers)
+                    (do_save, new_centers) = should_save(valid_boxes, saved_centers)
                     if do_save:
                         saved_centers = new_centers
-                        img_path = save_image(timestamp, frame, result.boxes)
+                        img_path = save_image(timestamp, frame, valid_boxes)
                         print(
                             f"{'Cat' if cat_detected else 'Person'} spotted at {timestamp}"
                         )
